@@ -26,7 +26,7 @@ body {
   font-family: var(--font-main);
   overflow: hidden; /* no scrolling */
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -178,11 +178,11 @@ ul { list-style: none; }
 
 .zones-panel {
   position: absolute;
-  top: 80px; left: 10px;
+  top: env(safe-area-inset-top, 80px); left: 10px;
   z-index: 20;
   padding: 1rem;
   width: 180px;
-  max-height: calc(100vh - 160px);
+  max-height: calc(100dvh - 180px);
   overflow-y: auto;
 }
 .zones-panel h4 { font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem; }
@@ -192,8 +192,8 @@ ul { list-style: none; }
 
 #gps-map-container {
   position: absolute;
-  bottom: 20px; right: 10px;
-  width: 160px; height: 160px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px)); right: 10px;
+  width: 140px; height: 140px;
   border-radius: 50%;
   z-index: 20;
   overflow: hidden;
@@ -203,7 +203,7 @@ ul { list-style: none; }
 
 .bottom-overlay {
   position: absolute;
-  bottom: 30px; left: 50%; transform: translateX(-50%);
+  bottom: calc(30px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
   z-index: 20;
   width: 80%; max-width: 300px;
 }
@@ -268,6 +268,19 @@ th { color: var(--text-muted); }
   0%, 100% { transform: translateX(0); }
   10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
   20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+@keyframes bounceIn {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.bounce-text { animation: bounceIn 0.5s ease-out; }
+
+/* Media Queries for very small phones */
+@media (max-width: 380px) {
+  .zones-panel { width: 140px; font-size: 0.9em; }
+  #gps-map-container { width: 110px; height: 110px; }
+  .btn.catch-btn { font-size: 1.2rem; padding: 1rem; }
 }
 
 /* Leaflet dark tweaks */

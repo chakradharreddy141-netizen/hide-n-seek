@@ -1,10 +1,14 @@
 const socket = io();
 
 // State
-let myId = null;
-let myName = '';
+let myId = localStorage.getItem('hideNSeekPlayerId');
+if (!myId) {
+  myId = 'p_' + Math.random().toString(36).substr(2, 9);
+  localStorage.setItem('hideNSeekPlayerId', myId);
+}
+let myName = localStorage.getItem('hideNSeekPlayerName') || '';
 let myRole = ''; // 'seeker' | 'hider'
-let roomCode = '';
+let roomCode = localStorage.getItem('hideNSeekRoomCode') || '';
 let isHost = false;
 
 // Geolocation tracking
@@ -17,6 +21,12 @@ let map = null;
 let myMarker = null;
 let hiderMarkers = [];
 
+// Timers
+let gameEndTimer = null;
+let gameEndTime = 0;
+let hidingEndTimer = null;
+let hidingEndTime = 0;
+
 // DOM Elements
 const screens = {
   landing: document.getElementById('screen-landing'),
@@ -26,9 +36,18 @@ const screens = {
   stats: document.getElementById('screen-stats')
 };
 
+// Initial state load
+if (myName) {
+  document.getElementById('player-name').value = myName;
+}
+
 function showScreen(name) {
   Object.values(screens).forEach(s => s.classList.remove('active'));
   screens[name].classList.add('active');
+  
+  if (name === 'game' && map) {
+    setTimeout(() => map.invalidateSize(), 100);
+  }
 }
 
 // ── Audio Context ──────────────────────────────────────────────────
@@ -59,7 +78,6 @@ function startTracking() {
       currentLat = pos.coords.latitude;
       currentLng = pos.coords.longitude;
       
-      // Update own marker if map exists
       if (map) {
         if (!myMarker) {
           myMarker = L.marker([currentLat, currentLng]).addTo(map);
@@ -70,7 +88,6 @@ function startTracking() {
         }
       }
       
-      // Send to server if in game
       if (roomCode) {
         socket.emit('location:update', { lat: currentLat, lng: currentLng });
       }
@@ -84,7 +101,6 @@ function startTracking() {
     { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
   );
   
-  // Init map early so it's ready
   initMap();
 }
 
@@ -93,7 +109,7 @@ function initMap() {
   map = L.map('gps-map-container', {
     zoomControl: false,
     attributionControl: false,
-    dragging: false, // compact map is centered on player
+    dragging: false,
     touchZoom: false,
     scrollWheelZoom: false,
     doubleClickZoom: false
@@ -104,6 +120,20 @@ function initMap() {
   }).addTo(map);
 }
 
+// ── Auto Rejoin Logic ──────────────────────────────────────────────
+socket.on('connect', () => {
+  if (roomCode && myName) {
+    socket.emit('room:join', { playerId: myId, playerName: myName, code: roomCode }, (res) => {
+      if (res.ok) {
+        startTracking(); // just in case
+      } else {
+        localStorage.removeItem('hideNSeekRoomCode');
+        roomCode = '';
+      }
+    });
+  }
+});
+
 // ── Landing & Menu ─────────────────────────────────────────────────
 document.getElementById('btn-enter').addEventListener('click', () => {
   const nameInput = document.getElementById('player-name').value.trim();
@@ -112,6 +142,7 @@ document.getElementById('btn-enter').addEventListener('click', () => {
     return;
   }
   myName = nameInput;
+  localStorage.setItem('hideNSeekPlayerName', myName);
   document.getElementById('menu-player-name').textContent = myName;
   startTracking();
   showScreen('menu');
@@ -119,9 +150,10 @@ document.getElementById('btn-enter').addEventListener('click', () => {
 
 document.getElementById('btn-create').addEventListener('click', () => {
   const roomName = document.getElementById('create-room-name').value.trim() || `${myName}'s Game`;
-  socket.emit('room:create', { playerName: myName, roomName }, (res) => {
+  socket.emit('room:create', { playerId: myId, playerName: myName, roomName }, (res) => {
     if (res.ok) {
       roomCode = res.code;
+      localStorage.setItem('hideNSeekRoomCode', roomCode);
       showScreen('lobby');
     }
   });
@@ -130,9 +162,10 @@ document.getElementById('btn-create').addEventListener('click', () => {
 document.getElementById('btn-join').addEventListener('click', () => {
   const code = document.getElementById('join-room-code').value.trim().toUpperCase();
   if (code.length !== 6) return;
-  socket.emit('room:join', { playerName: myName, code }, (res) => {
+  socket.emit('room:join', { playerId: myId, playerName: myName, code }, (res) => {
     if (res.ok) {
       roomCode = res.code;
+      localStorage.setItem('hideNSeekRoomCode', roomCode);
       showScreen('lobby');
     } else {
       document.getElementById('menu-error').textContent = res.error;
@@ -142,18 +175,25 @@ document.getElementById('btn-join').addEventListener('click', () => {
 
 // ── Lobby ──────────────────────────────────────────────────────────
 socket.on('lobby:update', (data) => {
+  if (!screens.lobby.classList.contains('active') && !screens.game.classList.contains('active')) {
+    showScreen('lobby');
+  }
+  
   document.getElementById('lobby-room-name').textContent = data.roomName;
   document.getElementById('lobby-room-code').textContent = data.code;
   
-  const me = data.players.find(p => p.id === socket.id);
+  const me = data.players.find(p => p.id === myId);
   isHost = me?.isHost;
   
   const playersUl = document.getElementById('lobby-players');
   playersUl.innerHTML = '';
   data.players.forEach(p => {
     const li = document.createElement('li');
-    li.innerHTML = `<span>${p.name} ${p.id === socket.id ? '(You)' : ''}</span> 
+    let text = `${p.name} ${p.id === myId ? '(You)' : ''}`;
+    if (!p.online) text += ' [Offline]';
+    li.innerHTML = `<span>${text}</span> 
                     ${p.isHost ? '<span class="badge-host">HOST</span>' : ''}`;
+    if (!p.online) li.style.opacity = '0.5';
     playersUl.appendChild(li);
   });
   document.getElementById('lobby-player-count').textContent = data.players.length;
@@ -169,7 +209,6 @@ socket.on('lobby:update', (data) => {
     btnStart.classList.remove('hidden');
     waitMsg.classList.add('hidden');
     
-    // Update inputs to match state
     document.getElementById('set-seekers').value = data.settings.seekerCount;
     document.getElementById('set-duration').value = data.settings.duration;
     document.getElementById('set-blip-int').value = data.settings.blipInterval;
@@ -191,7 +230,6 @@ socket.on('lobby:update', (data) => {
   }
 });
 
-// Host settings listeners
 const settingsInputs = ['set-seekers', 'set-duration', 'set-blip-int', 'set-blip-dur', 'set-gap'];
 settingsInputs.forEach(id => {
   document.getElementById(id).addEventListener('change', () => {
@@ -211,12 +249,11 @@ document.getElementById('btn-start').addEventListener('click', () => {
 });
 
 document.getElementById('btn-leave').addEventListener('click', () => {
+  localStorage.removeItem('hideNSeekRoomCode');
   window.location.reload();
 });
 
 // ── Game ───────────────────────────────────────────────────────────
-let gameEndTimer = null;
-let gameEndTime = 0;
 
 function formatTime(ms) {
   if (ms < 0) ms = 0;
@@ -259,58 +296,102 @@ function applyRole(role) {
   }
 }
 
+function startHidingTimer() {
+  if (hidingEndTimer) clearInterval(hidingEndTimer);
+  const gapEl = document.getElementById('hiding-timer');
+  
+  const tick = () => {
+    const remaining = hidingEndTime - Date.now();
+    if (remaining <= 0) {
+      clearInterval(hidingEndTimer);
+      gapEl.textContent = "00:00";
+      // Fallback transition if server doesn't send game:seekingPhase
+      document.getElementById('hiding-overlay').classList.add('hidden');
+    } else {
+      gapEl.textContent = formatTime(remaining);
+      if (remaining <= 3500 && remaining > 1000) playBeep(330, 'square', 0.1);
+    }
+  };
+  
+  tick(); // immediate
+  hidingEndTimer = setInterval(tick, 1000);
+}
+
+function startGameTimer() {
+  if (gameEndTimer) clearInterval(gameEndTimer);
+  const timerEl = document.getElementById('game-timer');
+  
+  const tick = () => {
+    const remaining = gameEndTime - Date.now();
+    if (remaining <= 0) {
+      clearInterval(gameEndTimer);
+      timerEl.textContent = "00:00";
+    } else {
+      timerEl.textContent = formatTime(remaining);
+    }
+  };
+  
+  tick(); // immediate
+  gameEndTimer = setInterval(tick, 1000);
+}
+
 socket.on('game:start', (data) => {
   showScreen('game');
   
-  if (data.seekers.includes(socket.id)) applyRole('seeker');
+  if (data.seekers.includes(myId)) applyRole('seeker');
   else applyRole('hider');
   
   updateZonesUI(data.zoneLevel);
   
+  hidingEndTime = data.hidingEndTime;
+  gameEndTime = data.gameEndTime;
+  
   // Hiding phase UI
   document.getElementById('hiding-overlay').classList.remove('hidden');
+  startHidingTimer();
+  startGameTimer();
   
-  let gapRemaining = data.hidingGap;
-  const gapEl = document.getElementById('hiding-timer');
-  gapEl.textContent = formatTime(gapRemaining * 1000);
+  // Seeker Announcement (Flash for 4 seconds)
+  const annOverlay = document.getElementById('seeker-announcement');
+  const annList = document.getElementById('announced-seekers-list');
+  annList.innerHTML = data.seekerNames.join('<br>');
+  annOverlay.classList.remove('hidden');
   
-  const int = setInterval(() => {
-    gapRemaining--;
-    gapEl.textContent = formatTime(gapRemaining * 1000);
-    if (gapRemaining <= 3 && gapRemaining > 0) playBeep(330, 'square', 0.1);
-    if (gapRemaining <= 0) {
-      clearInterval(int);
-      playBeep(440, 'square', 0.5);
-    }
-  }, 1000);
+  setTimeout(() => {
+    annOverlay.classList.add('hidden');
+  }, 4000);
+});
+
+socket.on('game:sync', (data) => {
+  showScreen('game');
+  applyRole(data.role);
+  updateZonesUI(data.zoneLevel);
+  
+  hidingEndTime = data.hidingEndTime;
+  gameEndTime = data.gameEndTime;
+  
+  if (data.state === 'hiding') {
+    document.getElementById('hiding-overlay').classList.remove('hidden');
+    startHidingTimer();
+  } else {
+    document.getElementById('hiding-overlay').classList.add('hidden');
+  }
+  
+  startGameTimer();
 });
 
 socket.on('game:seekingPhase', () => {
   document.getElementById('hiding-overlay').classList.add('hidden');
 });
 
-// Overall game timer tick from server isn't strictly necessary, we can just run it client side based on end time
-socket.on('game:start', (data) => {
-  // start game timer locally
-  gameEndTime = Date.now() + (data.settings.hidingGap * 1000) + (data.duration * 60 * 1000);
-  if (gameEndTimer) clearInterval(gameEndTimer);
-  gameEndTimer = setInterval(() => {
-    const ms = gameEndTime - Date.now();
-    document.getElementById('game-timer').textContent = formatTime(ms);
-  }, 1000);
-});
-
-// Role switch for caught hider
 socket.on('game:roleSwitch', (data) => {
   applyRole(data.newRole);
 });
 
-// Notifications
 socket.on('game:caught', (data) => {
-  if (data.hiderId === socket.id) {
+  if (data.hiderId === myId) {
     alert('YOU WERE CAUGHT! You are now a SEEKER.');
   } else {
-    // maybe a small toast, for now just log
     console.log(`${data.hiderName} caught by ${data.seekerName}`);
   }
 });
@@ -327,14 +408,10 @@ function hideBanner() {
   document.getElementById('event-banner').classList.add('hidden');
 }
 
-// Blip warning
-let blipWarnInt;
 socket.on('blip:start', (data) => {
-  // only seekers get this, hiders get 'blip:revealed'
   showBanner('BLIP ACTIVE', 'Hider locations on GPS map!');
   playBeep(880, 'sine', 0.2);
   
-  // draw hiders
   hiderMarkers.forEach(m => map.removeLayer(m));
   hiderMarkers = [];
   
@@ -402,6 +479,7 @@ document.getElementById('btn-close-catch').addEventListener('click', () => {
 // ── End Game Stats ─────────────────────────────────────────────────
 socket.on('game:end', (data) => {
   if (gameEndTimer) clearInterval(gameEndTimer);
+  if (hidingEndTimer) clearInterval(hidingEndTimer);
   showScreen('stats');
   
   let reasonMsg = data.reason === 'allCaught' ? 'SEEKERS WIN (All Caught)' : 'HIDERS WIN (Time Limit)';
@@ -418,7 +496,7 @@ socket.on('game:end', (data) => {
   data.playerStats.sort((a,b) => b.catches - a.catches).forEach(p => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${p.name} ${p.id === socket.id ? '(You)' : ''}</td>
+      <td>${p.name} ${p.id === myId ? '(You)' : ''}</td>
       <td>${p.wasOriginalSeeker ? 'Seeker' : 'Hider'}</td>
       <td>${p.catches}</td>
       <td>${p.survived !== null ? formatTime(p.survived) : '-'}</td>
@@ -429,15 +507,11 @@ socket.on('game:end', (data) => {
 });
 
 document.getElementById('btn-home').addEventListener('click', () => {
+  localStorage.removeItem('hideNSeekRoomCode');
   window.location.reload();
 });
 
-// Force map to invalidate size once its container is visible (fixes Leaflet grey tiles bug)
-const observer = new MutationObserver((mutations) => {
-  mutations.forEach((mutation) => {
-    if (mutation.target.classList.contains('active') && mutation.target.id === 'screen-game') {
-      if (map) setTimeout(() => map.invalidateSize(), 100);
-    }
-  });
-});
-observer.observe(screens.game, { attributes: true, attributeFilter: ['class'] });
+// Auto-show landing on boot if not attempting a rejoin
+if (!roomCode || !myName) {
+  showScreen('landing');
+}
