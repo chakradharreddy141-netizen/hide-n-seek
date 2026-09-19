@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Hide N Seek - MrBeast Edition</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  
+  <!-- Landing Screen -->
+  <section id="screen-landing" class="screen active">
+    <div class="panel glass">
+      <h1>HIDE N SEEK</h1>
+      <p class="subtitle">MrBeast Edition</p>
+      
+      <div class="input-group">
+        <label for="player-name">Your Name</label>
+        <input type="text" id="player-name" placeholder="E.g. Sneaky Ninja" maxlength="20">
+      </div>
+      
+      <div class="permission-box">
+        <h3>📍 Location Required</h3>
+        <p>This game uses real-world GPS tracking. You must allow location access to play.</p>
+      </div>
+      
+      <button id="btn-enter" class="btn primary">Enable GPS & Enter</button>
+      <div id="landing-error" class="error-msg"></div>
+    </div>
+  </section>
+
+  <!-- Menu Screen -->
+  <section id="screen-menu" class="screen">
+    <div class="panel glass">
+      <h2>Welcome, <span id="menu-player-name" class="accent-hider"></span>!</h2>
+      
+      <div class="menu-actions">
+        <div class="box">
+          <h3>Create a Game</h3>
+          <p>Host a new game and invite friends.</p>
+          <input type="text" id="create-room-name" placeholder="Room Name" maxlength="20">
+          <button id="btn-create" class="btn primary">Create Room</button>
+        </div>
+        
+        <div class="box">
+          <h3>Join a Game</h3>
+          <p>Enter a 6-character code.</p>
+          <input type="text" id="join-room-code" placeholder="Room Code" maxlength="6" style="text-transform: uppercase;">
+          <button id="btn-join" class="btn secondary">Join Room</button>
+        </div>
+      </div>
+      <div id="menu-error" class="error-msg"></div>
+    </div>
+  </section>
+
+  <!-- Lobby Screen -->
+  <section id="screen-lobby" class="screen">
+    <div class="panel glass">
+      <div class="lobby-header">
+        <h2 id="lobby-room-name">Room Name</h2>
+        <div class="room-code-box">Code: <span id="lobby-room-code"></span></div>
+      </div>
+      
+      <div class="lobby-content">
+        <!-- Settings (Host Only) -->
+        <div id="lobby-settings" class="box settings-box hidden">
+          <h3>Game Settings ⚙️</h3>
+          <div class="setting-row">
+            <label>Seekers</label>
+            <input type="number" id="set-seekers" value="1" min="1" max="10">
+          </div>
+          <div class="setting-row">
+            <label>Duration (min)</label>
+            <input type="number" id="set-duration" value="20" min="10" max="60">
+          </div>
+          <div class="setting-row">
+            <label>Blip Interval (min)</label>
+            <input type="number" id="set-blip-int" value="3" min="1" max="10">
+          </div>
+          <div class="setting-row">
+            <label>Blip Duration (sec)</label>
+            <input type="number" id="set-blip-dur" value="5" min="3" max="10">
+          </div>
+          <div class="setting-row">
+            <label>Hiding Gap (sec)</label>
+            <input type="number" id="set-gap" value="120" min="30" max="300">
+          </div>
+        </div>
+
+        <div id="lobby-settings-readonly" class="box settings-box hidden">
+          <h3>Game Settings ⚙️</h3>
+          <ul id="settings-list"></ul>
+        </div>
+
+        <!-- Players List -->
+        <div class="box players-box">
+          <h3>Players (<span id="lobby-player-count">0</span>)</h3>
+          <ul id="lobby-players"></ul>
+        </div>
+      </div>
+      
+      <div class="lobby-footer">
+        <button id="btn-start" class="btn primary hidden">Start Game</button>
+        <p id="waiting-host-msg" class="hidden">Waiting for host to start...</p>
+        <button id="btn-leave" class="btn danger-outline">Leave</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Game Screen -->
+  <section id="screen-game" class="screen">
+    <div class="game-layout">
+      <!-- Main Map Area (Screenshot) -->
+      <div class="screenshot-container">
+        <img id="map-image" src="" alt="Campus Map" />
+      </div>
+
+      <!-- Top Overlay: Role & Timer -->
+      <div class="top-overlay glass">
+        <div class="role-badge" id="player-role-badge">HIDER</div>
+        <div class="timer" id="game-timer">00:00</div>
+      </div>
+      
+      <!-- Right Overlay: Live GPS Map (Compact) -->
+      <div id="gps-map-container" class="glass">
+        <!-- Leaflet injects here -->
+      </div>
+      
+      <!-- Left Overlay: Area Lists -->
+      <div class="zones-panel glass">
+        <h4>Included Areas</h4>
+        <ul id="included-areas" class="safe-list"></ul>
+        <h4>Excluded Areas</h4>
+        <ul id="excluded-areas" class="danger-list"></ul>
+      </div>
+
+      <!-- Bottom Overlay: Catch Button (Seeker only) -->
+      <div class="bottom-overlay">
+        <button id="btn-catch" class="btn catch-btn hidden">CATCH HIDER</button>
+      </div>
+    </div>
+
+    <!-- Hiding Phase Overlay (Blocks map) -->
+    <div id="hiding-overlay" class="full-overlay glass hidden">
+      <h2>HIDING PHASE</h2>
+      <p id="hiding-msg">Hiders are running! Seekers are locked.</p>
+      <div class="big-timer" id="hiding-timer">02:00</div>
+    </div>
+
+    <!-- Blip / Shrink Alert Banners -->
+    <div id="event-banner" class="alert-banner hidden">
+      <h2 id="event-title">BLIP INCOMING</h2>
+      <p id="event-desc">Prepare to be revealed!</p>
+    </div>
+
+    <!-- Catch Modal -->
+    <div id="catch-modal" class="modal glass hidden">
+      <h3>Nearby Hiders</h3>
+      <ul id="nearby-hiders-list"></ul>
+      <button id="btn-close-catch" class="btn secondary">Cancel</button>
+    </div>
+  </section>
+
+  <!-- Stats Screen -->
+  <section id="screen-stats" class="screen">
+    <div class="panel glass">
+      <h1 class="accent-seeker">GAME OVER</h1>
+      <h3 id="stats-reason"></h3>
+      
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="label">Last Survivor</div>
+          <div class="val accent-hider" id="stat-survivor"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Top Hunter</div>
+          <div class="val accent-seeker" id="stat-hunter"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Duration</div>
+          <div class="val" id="stat-duration"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Zones Eliminated</div>
+          <div class="val" id="stat-zones"></div>
+        </div>
+      </div>
+
+      <h3>Player Stats</h3>
+      <div class="table-container">
+        <table id="stats-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Role</th>
+              <th>Catches</th>
+              <th>Survived</th>
+              <th>Distance (m)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      
+      <button id="btn-home" class="btn primary">Back to Home</button>
+    </div>
+  </section>
+
+  <!-- Scripts -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
